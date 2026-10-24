@@ -1,0 +1,14 @@
+{
+  "maple-mono-nl-nf-cn": {
+    "family": "Maple Mono NL NF CN",
+    "version": "7.9",
+    "source": "source/MapleMonoNL-NF-CN",
+    "license": "LICENSE.txt",
+    "styles": {
+      "400-normal": {
+        "file": "MapleMonoNL-NF-CN-Regular.ttf",
+        "local": ["Maple Mono NL NF CN Regular", "MapleMonoNL-NF-CN-Regular"]
+      }
+    }
+  }
+}

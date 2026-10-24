@@ -1,0 +1,3 @@
+[submodule "vendor/nam-files"]
+	path = vendor/nam-files
+	url = https://github.com/googlefonts/nam-files.git

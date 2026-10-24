@@ -1,0 +1,13 @@
+[project]
+name = "webfonts"
+version = "0.0.0"
+description = "Split webfonts into unicode-range woff2 subsets following Google Fonts' slicing."
+requires-python = ">=3.12"
+dependencies = [
+    "fonttools==4.67.0",
+    "brotli==1.2.0",
+]
+
+[tool.uv]
+# A set of scripts, not a library to install.
+package = false

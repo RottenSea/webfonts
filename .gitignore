@@ -1,0 +1,9 @@
+# downloaded upstream fonts; source/README.md says where they come from
+source/*
+!source/README.md
+
+# uv virtual environment
+.venv/
+
+# git worktrees of the font/* branches
+dist/
