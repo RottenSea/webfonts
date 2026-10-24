@@ -1,0 +1,3 @@
+*.woff2 binary
+*.css text eol=lf
+*.txt text eol=lf
