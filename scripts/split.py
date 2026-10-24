@@ -7,14 +7,24 @@ Simplified Chinese slices with those Latin codepoints taken out, all read from
 the vendor/nam-files submodule. Codepoints none of them lists are grouped by
 Unicode block: a large block is cut into groups of about --group-kb of raw
 glyph data, and neighbouring small blocks share a group up to that size.
+
+Output goes to dist/<font-id>/<version>/<weight>-<style>/, the worktree of
+branch font/<font-id>: one woff2 per group, named by a hash of its content,
+and a result.css with one @font-face per group.
 """
 
 import argparse
+import hashlib
+import io
 import json
 import re
+import shutil
+import subprocess
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from fontTools import unicodedata
+import fontTools
+from fontTools import subset, unicodedata
 from fontTools.ttLib import TTFont
 
 NAM_FILES = Path("vendor/nam-files")
@@ -127,7 +137,7 @@ def leftover_groups(leftovers: set[int], sizer: Sizer, cap: int) -> list[tuple[s
     return named
 
 
-def plan(font: dict, style: str, cap: int) -> list[tuple[str, set[int]]]:
+def plan(font: dict, style: str, cap: int, verbose: bool) -> list[tuple[str, set[int]]]:
     path = Path(font["source"]) / font["styles"][style]["file"]
     if not path.exists():
         raise SystemExit(f"Missing {path}. See source/README.md.")
@@ -141,10 +151,90 @@ def plan(font: dict, style: str, cap: int) -> list[tuple[str, set[int]]]:
     print(f"{style}: {len(available)} codepoints in the font")
     print(f"  {len(google)} Google groups cover {len(available) - len(leftovers)}")
     print(f"  {len(own)} own groups cover the other {len(leftovers)}")
-    print(f"\n  {'group':52} {'codepoints':>10} {'raw KB':>7}  blocks")
-    for name, cps, blocks in own:
-        print(f"  {name:52} {len(cps):10} {sizer.total(cps) / 1024:7.1f}  {', '.join(blocks)}")
+    if verbose:
+        print(f"\n  {'group':52} {'codepoints':>10} {'raw KB':>7}  blocks")
+        for name, cps, blocks in own:
+            print(f"  {name:52} {len(cps):10} {sizer.total(cps) / 1024:7.1f}  {', '.join(blocks)}")
     return google + [(name, cps) for name, cps, _ in own]
+
+
+_font_bytes = b""
+
+
+def init_worker(font_bytes: bytes) -> None:
+    global _font_bytes
+    _font_bytes = font_bytes
+
+
+def subset_woff2(cps: list[int]) -> bytes:
+    # recalcTimestamp=False keeps head.modified from the source font, so the
+    # same input always gives the same bytes.
+    font = TTFont(io.BytesIO(_font_bytes), recalcTimestamp=False)
+    options = subset.Options()
+    options.layout_features = ["*"]
+    options.name_IDs = ["*"]
+    options.name_languages = ["*"]
+    options.notdef_outline = True
+    # fontTools cannot subset the meta table and would drop it with a warning.
+    options.drop_tables += ["meta"]
+    subsetter = subset.Subsetter(options)
+    subsetter.populate(unicodes=cps)
+    subsetter.subset(font)
+    # Options.flavor only applies in the pyftsubset CLI; the API reads it from the font.
+    font.flavor = "woff2"
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
+def unicode_range(cps: set[int]) -> str:
+    ordered, parts, i = sorted(cps), [], 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
+            j += 1
+        parts.append(f"U+{ordered[i]:X}" if i == j else f"U+{ordered[i]:X}-{ordered[j]:X}")
+        i = j + 1
+    return ",".join(parts)
+
+
+def css_header(ttf: TTFont) -> str:
+    name = ttf["name"]
+    lines = [name.getDebugName(i) for i in (0, 5, 13, 14)]  # copyright, version, license, license URL
+    nam_version = subprocess.run(
+        ["git", "-C", str(NAM_FILES), "describe", "--tags", "--always"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    lines.append(f"Subsets follow Google Fonts' latin, latin-ext and Simplified Chinese slices (nam-files {nam_version}).")
+    lines.append(f"Split with fontTools {fontTools.version}.")
+    return "/*\n" + "".join(f" * {line}\n" for line in lines if line) + " */\n"
+
+
+def write_style(font_id: str, font: dict, style: str, groups: list[tuple[str, set[int]]]) -> None:
+    spec = font["styles"][style]
+    font_bytes = (Path(font["source"]) / spec["file"]).read_bytes()
+    out_dir = Path("dist", font_id, font["version"], style)
+    # File names are content hashes, so clear the folder instead of leaving stale files.
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+
+    with ProcessPoolExecutor(initializer=init_worker, initargs=(font_bytes,)) as pool:
+        blobs = list(pool.map(subset_woff2, [sorted(cps) for _, cps in groups]))
+
+    weight, font_style = style.split("-")
+    local = ",".join(f'local("{n}")' for n in spec["local"])
+    faces = []
+    for (_, cps), blob in zip(groups, blobs):
+        file = hashlib.sha256(blob).hexdigest()[:16] + ".woff2"
+        (out_dir / file).write_bytes(blob)
+        faces.append(
+            f'@font-face{{font-family:"{font["family"]}";src:{local},url("./{file}")format("woff2");'
+            f"font-style:{font_style};font-weight:{weight};font-display:swap;"
+            f"unicode-range:{unicode_range(cps)}}}\n"
+        )
+    header = css_header(TTFont(io.BytesIO(font_bytes), lazy=True))
+    (out_dir / "result.css").write_text(header + "".join(faces), encoding="utf-8", newline="\n")
+    total = sum(len(b) for b in blobs)
+    print(f"  wrote {len(blobs)} woff2 files ({total / 1048576:.1f} MB) and result.css to {out_dir}")
 
 
 def main() -> None:
@@ -159,10 +249,15 @@ def main() -> None:
     if args.font not in fonts:
         raise SystemExit(f"Unknown font {args.font!r}. Known: {', '.join(fonts)}")
     font = fonts[args.font]
-    for style in args.styles or font["styles"]:
-        plan(font, style, args.group_kb * 1024)
+    root = Path("dist", args.font)
     if not args.dry_run:
-        raise SystemExit("Only --dry-run is implemented so far.")
+        if not root.exists():
+            raise SystemExit(f"Missing {root}. Check out its branch: git worktree add {root} font/{args.font}")
+        shutil.copyfile(Path(font["source"]) / font["license"], root / "OFL.txt")
+    for style in args.styles or font["styles"]:
+        groups = plan(font, style, args.group_kb * 1024, verbose=args.dry_run)
+        if not args.dry_run:
+            write_style(args.font, font, style, groups)
 
 
 if __name__ == "__main__":
