@@ -8,6 +8,18 @@
       "400-normal": {
         "file": "MapleMonoNL-NF-CN-Regular.ttf",
         "local": ["Maple Mono NL NF CN Regular", "MapleMonoNL-NF-CN-Regular"]
+      },
+      "400-italic": {
+        "file": "MapleMonoNL-NF-CN-Italic.ttf",
+        "local": ["Maple Mono NL NF CN Italic", "MapleMonoNL-NF-CN-Italic"]
+      },
+      "500-normal": {
+        "file": "MapleMonoNL-NF-CN-Medium.ttf",
+        "local": ["Maple Mono NL NF CN Medium", "MapleMonoNL-NF-CN-Medium"]
+      },
+      "700-normal": {
+        "file": "MapleMonoNL-NF-CN-Bold.ttf",
+        "local": ["Maple Mono NL NF CN Bold", "MapleMonoNL-NF-CN-Bold"]
       }
     }
   }
